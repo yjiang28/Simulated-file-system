@@ -62,7 +62,7 @@ typedef struct disk{
 }disk;
 
 typedef struct dir_entry{
-    char filename[filename_length];
+    char filename[filename_length+2];
     int i_node_index;   // this is the start index of its i-node
 }dir_entry;
 
@@ -72,8 +72,8 @@ typedef struct fd_entry{
     int write_ptr;
 }fd_entry;
 
-i_node *i_node_array;
-disk *my_disk_file;
+i_node   *i_node_array;
+disk     *my_disk_file;
 fd_entry fd_table[max_file_num];
 /* formats the virtual disk implemented by the disk emulator.
  * creates an instance of SSFS file system on top of it.
@@ -111,7 +111,8 @@ void mkssfs(int fresh)
         
         /* set up an array containing all the i-nodes */ 
         i_node i_node_array[max_file_num];
-        i_node_array[0].pointer[0] = 0; // the address of the root directory is 0, i.e. it is pointed to by the first pointer in the first user data block
+        for(i=0;i<4;i++){ i_node_array[0].pointer[i] = i+16; }  // the root directory takes up 4 blocks
+        i_node_array[0].size = 4;
         for(i=1;i<max_file_num;i++) { i_node_array[i].size = -1; }
         
         /* store the i-node array into a file */
@@ -170,11 +171,73 @@ void mkssfs(int fresh)
 
 /* opens the given file
  * returns an integer corresponds to the index of the entry of this file in the fd_table
+ * if the file does not exist, it creates a new file and sets its size to 0. 
+ * if the file exists, the file is opened in append mode (i.e., set the write file pointer to the end of the file and read at the beginning of the file).
  */
 int ssfs_fopen(char *name)
 {
-    /* read the j-node into a buffer */
+    int file_start_block,       // the i-node file starts from this block
+        root_dir_start_block,   // the root directory starts from this block
+        root_dir_num_block;     // the number of blocks that the root directory takes up
 
+    superblock *buffer_sp = (superblock *)malloc(block_size); 
+    i_node     *i_node_buf = (i_node *)malloc(block_size);
+    dir_entry  *root_dir_buf;
+    superblock sp;
+    dir_entry  root_dir[max_file_num];
+
+    /* read the superblock into a buffer 
+     * map the superblock buffer to a struct sp 
+     */
+    read_blocks(0, 1, buffer_sp);
+    memcpy(&sp, buffer_sp, sizeof(superblock));
+    /* read the first block that stores the i-node file into a buffer */
+    file_start_block = sp.root.pointer[0]; printf("first_block_index = %d\n", file_start_block);
+    if(read_blocks(file_start_block, 1, i_node_buf) < 0) exit(EXIT_FAILURE);
+    /* read the root directory into a buffer
+     * map the root directory buffer into a struct root_dir 
+     */
+    root_dir_start_block = i_node_buf[0].pointer[0]; 
+    root_dir_num_block = i_node_buf[0].size;
+    root_dir_buf = (dir_entry *)malloc(root_dir_num_block*block_size);
+    printf("i-node file starts from the %d-th block\nthe first i-node has %d pointers\n", root_dir_start_block, i_node_buf[0].size);
+    if(read_blocks(root_dir_start_block, i_node_buf[0].size, root_dir_buf) < 0) exit(EXIT_FAILURE);
+    memcpy(&root_dir, root_dir_buf, max_file_num*sizeof(dir_entry));
+
+    int i_node_number = 0;
+    int i=0;
+    for(i=0;i<max_file_num;i++)
+    {
+        if(root_dir[i].i_node_index!=-1 && strcmp(root_dir[i].filename, name)==0)
+        {
+            /* check if this file is already opened */
+            int k;
+            for(k=0;k<max_file_num;k++)
+            {
+                if(fd_table[k].i_node_number==i_node_number) 
+                {
+                    printf("The requested file is already opened\n");
+                    return 0;
+                }
+            }
+            /* if this file is not opened, open it */
+            /* first, place its i_node number into the file descriptor table */
+            for(k=0;k<max_file_num;k++)
+            {
+                if(fd_table[k].i_node_number==-1) 
+                {
+                    fd_table[k].i_node_number = i_node_number;
+                    /* find where the file starts and ends */
+                    return 0;
+                }
+            }
+            /* then, place its read and write pointer to the proper position */
+
+            i_node_number++;
+        }
+        //if(j<block_size) break;
+    }
+    
 }
 
 
@@ -200,4 +263,5 @@ int ssfs_restore(int cnum)
 int main()
 {
     mkssfs(1);
+    ssfs_fopen("abc");
 }
