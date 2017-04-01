@@ -12,7 +12,7 @@
 #define block_size 1024      // the size of each data block in bytes
 #define num_blocks 1027      // the # of blocks
 #define max_file_num 200     // the # of i-nodes
-#define filename_length 10	 // the filename has at most 10 characters
+#define filename_length 10   // the filename has at most 10 characters
 #define max_restore_time 8
 
 void mkssfs(int fresh);                             // creates the file system
@@ -62,8 +62,8 @@ typedef struct disk{
 }disk;
 
 typedef struct dir_entry{
-	char filename[filename_length];
-	int i_node_index;	// this is the start index of its i-node
+    char filename[filename_length];
+    int i_node_index;   // this is the start index of its i-node
 }dir_entry;
 
 typedef struct fd_entry{
@@ -84,9 +84,10 @@ void mkssfs(int fresh)
 {
     char *filename = "yjiang28_disk";
     char *i_node_filename = "yjiang28_i_node_file";
-   	FILE *i_node_file_fp;
+    FILE *i_node_file_fp;
     int  disk_size = block_size*num_blocks;
     disk my_disk; 
+    int  i;
 
     if(fresh)
     {
@@ -94,53 +95,60 @@ void mkssfs(int fresh)
 
         /* setup the super block*/
         superblock sp;
-		    sp.magic = 0xACBD0005;
-		    sp.b_size = block_size;
-		    sp.f_size = num_blocks;
-		    sp.i_num = max_file_num;
+            sp.magic = 0xACBD0005;
+            sp.b_size = block_size;
+            sp.f_size = num_blocks;
+            sp.i_num = max_file_num;
+            sp.root.size = 13;  // 13 pointers are used to point to the i-node file
+            for(i=0;i<13;i++) { sp.root.pointer[i]=i+3; }
 
-		/* setup the FBM & WM */
+        /* setup the FBM & WM */
         disk my_disk; 
         my_disk.s = sp;
-    	int i;
-    	for(i=0;i<num_blocks;i++) { my_disk.fbm[i] = 1; my_disk.wm[i] = 1; } // 1 indicates the data block is unused and writeable respectively
-    	my_disk.fbm[0] = 0;	// the first block is used by the root  
-        
-		/* set up an array containing all the i-nodes */ 
-        i_node i_node_array[max_file_num];
-        i_node_array[0].pointer[0] = 0;	// the address of the root directory is 0, i.e. it is pointed to by the first pointer in the first user data block
-		for(i=1;i<max_file_num;i++) { i_node_array[i].size = -1; }
-		
-		/* store the i-node array into a file */
-		i_node_file_fp = fopen(i_node_filename, "w+b");
-		if (i_node_file_fp != NULL) 
-		{
-		    fwrite(i_node_array, max_file_num*sizeof(i_node), 1, i_node_file_fp);
-		    fclose(i_node_file_fp);
-		}
 
-		/* setup the root directory */
-		dir_entry root_dir[max_file_num];
-		for(i=0;i<max_file_num;i++){ root_dir[i].i_node_index = -1; }
+        for(i=0;i<num_blocks;i++) { my_disk.fbm[i] = 1; my_disk.wm[i] = 1; } // 1 indicates the data block is unused and writeable respectively
+        my_disk.fbm[0] = 0; // the first block is used by the root  
+        
+        /* set up an array containing all the i-nodes */ 
+        i_node i_node_array[max_file_num];
+        i_node_array[0].pointer[0] = 0; // the address of the root directory is 0, i.e. it is pointed to by the first pointer in the first user data block
+        for(i=1;i<max_file_num;i++) { i_node_array[i].size = -1; }
+        
+        /* store the i-node array into a file */
+        i_node_file_fp = fopen(i_node_filename, "w+b");
+        if (i_node_file_fp != NULL) 
+        {
+            fwrite(i_node_array, max_file_num*sizeof(i_node), 1, i_node_file_fp);
+            fclose(i_node_file_fp);
+        }
+
+        /* set up the root directory */
+        dir_entry root_dir[max_file_num];
+        for(i=0;i<max_file_num;i++){ root_dir[i].i_node_index = -1; }
 
         /* map the superblock, fbm, wm and i-node file onto the disk */
         superblock *buffer_sp = (superblock *)malloc(block_size); 
-        int 	   *buffer_fbm = (int *)malloc(block_size);
+        int        *buffer_fbm = (int *)malloc(block_size);
         int        *buffer_wm = (int *)malloc(block_size);
         i_node     *buffer_i_node_file = (i_node *)malloc(max_file_num*sizeof(i_node));
         dir_entry  *buffer_root_dir = (dir_entry *)malloc(max_file_num*sizeof(dir_entry));
-    	memcpy(buffer_sp, &(my_disk.s), block_size); 
-    	memcpy(buffer_fbm, &(my_disk.fbm), block_size); 
-    	memcpy(buffer_wm, &(my_disk.wm), block_size);
-    	memcpy(buffer_i_node_file, &i_node_array, max_file_num*sizeof(i_node));
-    	memcpy(buffer_root_dir, &root_dir, max_file_num*sizeof(dir_entry)); 
-    	if( write_blocks(0, 1, buffer_sp)<0 || write_blocks(1, 1, buffer_fbm)<0 || write_blocks(2, 1, buffer_wm)<0 
-    		|| write_blocks(3, 13, buffer_i_node_file)<0 || write_blocks(16, 4, buffer_root_dir)<0 ) exit(EXIT_FAILURE);
-    	free(buffer_sp); free(buffer_wm); free(buffer_fbm); free(buffer_i_node_file); free(buffer_root_dir);
-    	/* Re-open it in read-only mode */
-        i_node_file_fp = fopen(i_node_filename, "r");
-	       
+
+        memcpy(buffer_sp, &(my_disk.s), block_size); 
+        memcpy(buffer_fbm, &(my_disk.fbm), block_size); 
+        memcpy(buffer_wm, &(my_disk.wm), block_size);
+        memcpy(buffer_i_node_file, &i_node_array, max_file_num*sizeof(i_node));
+        memcpy(buffer_root_dir, &root_dir, max_file_num*sizeof(dir_entry)); 
+
+        if( write_blocks(0, 1, buffer_sp)<0 || write_blocks(1, 1, buffer_fbm)<0 || write_blocks(2, 1, buffer_wm)<0 
+            || write_blocks(3, 13, buffer_i_node_file)<0 || write_blocks(16, 4, buffer_root_dir)<0 ) exit(EXIT_FAILURE);
+        
+        free(buffer_sp); free(buffer_wm); free(buffer_fbm); free(buffer_i_node_file); free(buffer_root_dir);
+        
+        /* Re-open it in read-only mode */
+        i_node_file_fp = fopen(i_node_filename, "r");          
     }
+    for(i=0;i<max_file_num;i++) { fd_table[i].i_node_number = -1; }
+
 /*
     else
     {
@@ -150,7 +158,7 @@ void mkssfs(int fresh)
         int disk_fd = open(filename, O_RDWR);
         my_disk_file = (disk *)mmap(NULL, disk_size, PROT_READ|PROT_WRITE, MAP_SHARED, disk_fd, 0); if (my_disk_file == MAP_FAILED) exit(EXIT_FAILURE);
 */
-  	     /* initialize the file containing all the i-nodes 
+         /* initialize the file containing all the i-nodes 
         i_node_file_fd = open(i_node_filename, O_RDONLY);
         i_node_array = (i_node *)malloc(max_file_num*sizeof(i_node));
         i_node_array = (i_node *)mmap(NULL, max_file_num*sizeof(i_node), PROT_READ|PROT_WRITE, MAP_SHARED, i_node_file_fd, 0); if (i_node_array == MAP_FAILED) exit(EXIT_FAILURE);
@@ -165,6 +173,7 @@ void mkssfs(int fresh)
  */
 int ssfs_fopen(char *name)
 {
+    /* read the j-node into a buffer */
 
 }
 
