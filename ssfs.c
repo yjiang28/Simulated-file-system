@@ -97,22 +97,6 @@ void load_wm()
     free(buffer_wm);
 }
 
-void load_i_node_file()
-{
-    i_node *buffer_i_node_file = (i_node *)malloc(file_block_num*block_size);
-    if( read_blocks(file_start_block, file_block_num, buffer_i_node_file) < 0) exit(EXIT_FAILURE);
-    memcpy(&i_node_array, buffer_i_node_file, max_file_num*sizeof(i_node));
-    free(buffer_i_node_file);
-}
-
-void load_root_dir()
-{
-    dir_entry *buffer_root_dir = (dir_entry *)malloc(root_dir_block_num*block_size);
-    if( read_blocks(root_dir_start_block, root_dir_block_num, buffer_root_dir) < 0) exit(EXIT_FAILURE);
-    memcpy(&root_dir, buffer_root_dir, max_file_num*sizeof(dir_entry));
-    free(buffer_root_dir);
-}
-
 void commit_sp()
 {
     superblock *buffer_sp = (superblock *)malloc(block_size); 
@@ -137,20 +121,87 @@ void commit_wm()
     free(buffer_wm);
 }
 
+void load_i_node_file()
+{
+    i_node *buffer = (i_node *)malloc(block_size), array[file_block_num][block_size/sizeof(i_node)];
+    int i, j, k=0, m;
+    for(i=0;i<file_block_num;i++)
+    {
+        load_sp();
+        if( read_blocks(sp.root.pointer[i], 1, buffer) < 0) exit(EXIT_FAILURE);
+        memcpy(&array[i], buffer, block_size);
+        for(j=0;j<block_size/sizeof(i_node);j++)
+        {
+            if(k>=max_file_num) break;
+            i_node_array[k].size = array[i][j].size;
+            for(m=0;m<array[i][j].size;m++)
+            {
+                i_node_array[k].pointer[m] = array[i][j].pointer[m];
+            }
+            k++;
+        }
+    }
+    free(buffer);
+}
+
 void commit_i_node_file()
 {
-    i_node *buffer_i_node_file = (i_node *)malloc(max_file_num*sizeof(i_node));
-    memcpy(buffer_i_node_file, &i_node_array, max_file_num*sizeof(i_node));
-    if( write_blocks(file_start_block, file_block_num, buffer_i_node_file) < 0) exit(EXIT_FAILURE);
-    free(buffer_i_node_file);
+    i_node *buffer = (i_node *)malloc(block_size), array[file_block_num][block_size/sizeof(i_node)];
+    int i, j, k=0, m;
+    for(i=0;i<file_block_num;i++)
+    {
+        for(j=0;j<block_size/sizeof(i_node);j++)
+        {
+            if(k>=max_file_num) break;
+            array[i][j].size = i_node_array[k].size;
+            for(m=0;m<array[i][j].size;m++){ array[i][j].pointer[m] = i_node_array[k].pointer[m]; }
+            k++;
+        }
+        load_sp();
+        memcpy(buffer, &array[i], block_size);
+        if( write_blocks(sp.root.pointer[i], 1, buffer) < 0) exit(EXIT_FAILURE);        
+    }
+    free(buffer);
+}
+
+void load_root_dir()
+{
+    dir_entry *buffer = (dir_entry *)malloc(block_size), array[root_dir_block_num][block_size/sizeof(dir_entry)];
+    int i, j, k=0;
+    for(i=0;i<root_dir_block_num;i++)
+    {
+        load_i_node_file();
+        if( read_blocks(i_node_array[0].pointer[i], 1, buffer) < 0) exit(EXIT_FAILURE);
+        memcpy(&array[i], buffer, block_size);
+        for(j=0;j<block_size/sizeof(dir_entry);j++)
+        {
+            if(k>=max_file_num) break;
+            root_dir[k].i_node_index = array[i][j].i_node_index;
+            strcpy(root_dir[k].filename, array[i][j].filename);
+            k++;
+        }
+    }
+    free(buffer);
 }
 
 void commit_root_dir()
 {
-    dir_entry *buffer_root_dir = (dir_entry *)malloc(root_dir_block_num*block_size);
-    memcpy(buffer_root_dir, &root_dir, max_file_num*sizeof(dir_entry));
-    if( write_blocks(root_dir_start_block, root_dir_block_num, buffer_root_dir) < 0) exit(EXIT_FAILURE);
-    free(buffer_root_dir);
+    dir_entry *buffer = (dir_entry *)malloc(block_size), array[root_dir_block_num][block_size/sizeof(dir_entry)];
+    int i, j, k=0;
+    for(i=0;i<root_dir_block_num;i++)
+    {
+        for(j=0;j<block_size/sizeof(dir_entry);j++)
+        {
+            if(k>=max_file_num) break;
+            array[i][j].i_node_index = root_dir[k].i_node_index;
+            strcpy(array[i][j].filename, root_dir[k].filename);
+            k++;
+        }
+        load_i_node_file();
+        memcpy(buffer, &array[i], block_size);
+        if( write_blocks(i_node_array[0].pointer[i], 1, buffer) < 0) exit(EXIT_FAILURE);        
+    }
+    free(buffer);
 }
 
 /* returns the index of the first unused block
@@ -166,9 +217,11 @@ int unused_block()
 
 int unused_i_node()
 {
-    load_i_node_file();
+    //load_i_node_file();
     int i=0;
-    for(i=0;i<max_file_num;i++) { if(i_node_array[i].size == -1) return i; }
+    for(i=0;i<max_file_num;i++) { 
+        if(i_node_array[i].size == -1) return i; 
+    }
     return -1;
 }
 
@@ -351,9 +404,9 @@ void mkssfs(int fresh)
         /* set up the root directory */
         root_dir[0].i_node_index = 0;   // the first i-node is associated with the root directory
         for(i=1;i<max_file_num;i++){ root_dir[i].i_node_index = -1; }
-
+        
         /* map the superblock, fbm, wm and i-node file onto the disk */
-        commit_sp(); commit_fbm(); commit_wm(); commit_root_dir(); commit_i_node_file();
+        commit_sp(); commit_fbm(); commit_wm(); commit_i_node_file(); commit_root_dir(); 
 
         /* set up the data blocks and map it onto the disk */
         char data[num_blocks-20][block_size];
@@ -366,9 +419,98 @@ void mkssfs(int fresh)
     else if(init_disk(filename, block_size, num_blocks) ==-1) exit(EXIT_FAILURE);
 
     /* load cached data structures */
-    load_sp(); load_wm(); load_fbm(); load_root_dir(); load_i_node_file();
+    load_sp(); load_wm(); load_fbm(); load_root_dir(); //load_i_node_file();
 }
 
+int ssfs_fopen(char *name)
+{
+    int i=0, j=0, k=0, new_fd_entry=-1;
+    for(i=0;i<max_file_num;i++)
+    {
+        /* if the file exists */
+        if(root_dir[i].i_node_index!=-1 && strcmp(root_dir[i].filename, name)==0)
+        {
+            int i_node_number, new_fd_entry;
+
+            i_node_number = root_dir[i].i_node_index;
+            /* check if this file is already opened */
+            for(k=0;k<max_file_num;k++){ 
+                if(fd_table[k].i_node_number==i_node_number) { 
+                    printf("The requested file is already opened\n"); 
+                    return -1;
+                }
+            }
+
+            /* if this file is not opened, open it */
+            new_fd_entry = unused_fd_entry();
+            /* place its i_node number into the file descriptor table */
+            fd_table[new_fd_entry].i_node_number = i_node_number;
+            /* place its read and write pointer to the proper position */
+            i_node file_i_node = i_node_array[i_node_number];
+            fd_table[new_fd_entry].read_ptr.block = file_i_node.pointer[0]; fd_table[new_fd_entry].read_ptr.entry = 0;
+            fd_table[new_fd_entry].write_ptr.block = file_i_node.pointer[file_i_node.size-1];
+            /* map the end data block into a buffer */
+            if(read_blocks(fd_table[new_fd_entry].write_ptr.block, 1, &a_block_buf) <0 ) exit(EXIT_FAILURE);
+            for(j=0;j<block_size;j++){ if(a_block_buf[j] == '0') break; }
+            fd_table[new_fd_entry].write_ptr.entry = j;      
+            return new_fd_entry;         
+        }
+    }
+
+    /* if the file doesn't exist, create a new one of size 0 */
+    if(i==max_file_num)
+    {        
+        int *pointer, new_dir_entry=0, new_file_block=0, new_i_node=0, new_fd_entry=0;
+
+        /* copy the root to one of the available shadow roots */
+        for(i=0;i<max_restore_time;i++){ if(sp.shadow[i].size==-1) break;}
+        /* if the shadow list is full */
+        if(i==max_restore_time)
+        {
+            /* evict the first one and shift the rest one spot above */
+            for(k=0;k<max_restore_time-1;k++)
+            {
+                sp.shadow[k].size = sp.shadow[k+1].size;
+                for(j=0;j<sp.shadow[k].size;j++){ sp.shadow[k].pointer[j] = sp.shadow[k+1].pointer[j]; }
+            }
+            i = max_restore_time-1;
+        }
+        // let a j-node to store the current root 
+        sp.shadow[i].size = sp.root.size;
+        for(j=0;j<sp.root.size;j++){ sp.shadow[i].pointer[j] = sp.root.pointer[j]; }
+
+        // 1. find an empty block in the data block to place the file
+        new_file_block = unused_block();
+        fbm[new_file_block] = 0;
+        commit_fbm();
+
+        // 2.1 create an i-node in the copy of the i-node file
+        new_i_node = unused_i_node(); 
+        i_node_array[new_i_node].size = 1;
+        i_node_array[new_i_node].pointer[0] = new_file_block;
+
+        /////////////// 2.2 write the copy of the i-node file onto the disk  ///////////////
+        write_file_to_blocks(file_block_num, &i_node_array, &sp.root.pointer);
+        /////////////// 2.3 write the sp back to the disk  ///////////////
+        commit_sp();       
+
+        // 3.1 create a new entry in the copy of the root directory
+        new_dir_entry = unused_dir_entry();
+        root_dir[new_dir_entry].i_node_index = new_i_node;
+        strcpy(root_dir[new_dir_entry].filename, name);
+        /////////////// 3.2 write the copy of the root directory onto the disk ///////////////
+        write_file_to_blocks(root_dir_block_num, &root_dir, &i_node_array[0].pointer);
+        
+        // 4. create a new entry in the file descriptor table
+        new_fd_entry = unused_fd_entry(); 
+        fd_table[new_fd_entry].i_node_number = new_i_node;
+        fd_table[new_fd_entry].read_ptr.block = new_file_block; fd_table[new_fd_entry].read_ptr.entry = 0;
+        fd_table[new_fd_entry].write_ptr.block = new_file_block; fd_table[new_fd_entry].write_ptr.entry = 0;
+        return new_fd_entry;
+    }
+    printf("fopen cannot reach here!\n");
+    return -1;  
+}
 
 int ssfs_fwrite(int fileID, char *buf, int length)
 {
@@ -473,129 +615,6 @@ int ssfs_fread(int fileID, char *buf, int length)
     }
     printf("requested file is not opened\n");
     return -1;
-}
-
-/* opens the given file
- * returns an integer corresponds to the index of the entry of this file in the fd_table
- * if the file does not offset, it creates a new file and sets its size to 0. 
- * if the file offsets, the file is opened in append mode (i.e., set the write file pointer to the end of the file and read at the beginning of the file).
- */
-int ssfs_fopen(char *name)
-{
-    int i=0, j=0, k=0, new_fd_entry=-1;
-
-    /* copy the blocks holding the root directory */
-    load_root_dir();
-    /* copy the block containing the i-node file */
-    load_i_node_file();
-    for(i=0;i<max_file_num;i++)
-    {
-        /* if the file exists */
-        if(root_dir[i].i_node_index!=-1 && strcmp(root_dir[i].filename, name)==0)
-        {
-            int i_node_number, new_fd_entry;
-
-            i_node_number = root_dir[i].i_node_index;
-            /* check if this file is already opened */
-            for(k=0;k<max_file_num;k++){ 
-                if(fd_table[k].i_node_number==i_node_number) { 
-                    printf("The requested file is already opened\n"); 
-                    return -1;
-                }
-            }
-
-            /* if this file is not opened, open it */
-            new_fd_entry = unused_fd_entry();
-            /* place its i_node number into the file descriptor table */
-            fd_table[new_fd_entry].i_node_number = i_node_number;
-            /* place its read and write pointer to the proper position */
-            i_node file_i_node = i_node_array[i_node_number];
-            fd_table[new_fd_entry].read_ptr.block = file_i_node.pointer[0]; fd_table[new_fd_entry].read_ptr.entry = 0;
-            fd_table[new_fd_entry].write_ptr.block = file_i_node.pointer[file_i_node.size-1];
-            /* map the end data block into a buffer */
-            if(read_blocks(fd_table[new_fd_entry].write_ptr.block, 1, &a_block_buf) <0 ) exit(EXIT_FAILURE);
-            for(j=0;j<block_size;j++){ if(a_block_buf[j] == '0') break; }
-            fd_table[new_fd_entry].write_ptr.entry = j;      
-            return new_fd_entry;         
-        }
-    }
-
-    /* if the file doesn't exist, create a new one of size 0 */
-    if(i==max_file_num)
-    {        
-        int *pointer, new_dir_entry=0, new_file_block=0, new_i_node=0, new_fd_entry=0;
-        /* get the superblock */
-        load_sp(); load_fbm();
-        /* copy the root to one of the available shadow roots */
-        for(i=0;i<max_restore_time;i++){ if(sp.shadow[i].size==-1) break;}
-        /* if the shadow list is full */
-        if(i==max_restore_time)
-        {
-            /* evict the first one and shift the rest one spot above */
-            for(k=0;k<max_restore_time-1;k++)
-            {
-                sp.shadow[k].size = sp.shadow[k+1].size;
-                for(j=0;j<sp.shadow[k].size;j++){ sp.shadow[k].pointer[j] = sp.shadow[k+1].pointer[j]; }
-            }
-            i = max_restore_time-1;
-        }
-        // let a j-node to store the current root 
-        sp.shadow[i].size = sp.root.size;
-        for(j=0;j<sp.root.size;j++){ sp.shadow[i].pointer[j] = sp.root.pointer[j]; }
-        //printf("shadow root %d\n", i); 
-
-        // 1. find an empty block in the data block to place the file
-        new_file_block = unused_block();
-        fbm[new_file_block] = 0;
-        commit_fbm();
-        //printf("new file in block %d\n", new_file_block);
-
-        // 2.1 create an i-node in the copy of the i-node file
-        new_i_node = unused_i_node();
-        i_node_array[new_i_node].size = 1;
-        i_node_array[new_i_node].pointer[0] = new_file_block;
-        //printf("the index of the i-node is %d\n", new_i_node);
-
-        /////////////// 2.2 write the copy of the i-node file onto the disk  ///////////////
-        pointer = (int *)malloc(file_block_num*sizeof(int));
-        write_file_to_blocks(file_block_num, &i_node_array, pointer);
-
-        // 2.3 modify the root j-node to point to the new i-node file
-        for(k=0;k<file_block_num;k++){ sp.root.pointer[k] = pointer[k];}
-        // 2.4 modify the file_start_block
-        file_start_block = pointer[0];
-        //printf("file_start_block %d\n", pointer[0]);
-        free(pointer);
-        /////////////// 2.5 write the sp back to the disk  ///////////////
-        commit_sp();       
-
-        // 3.1 create a new entry in the copy of the root directory
-        new_dir_entry = unused_dir_entry();
-        //printf("the index of the new dir_entry is %d\n", new_dir_entry);
-        root_dir[new_dir_entry].i_node_index = new_i_node;
-        strcpy(root_dir[new_dir_entry].filename, name);
-
-        /////////////// 3.2 write the copy of the root directory onto the disk ///////////////
-        pointer = (int *)malloc(root_dir_block_num*sizeof(int));
-        write_file_to_blocks(root_dir_block_num, &root_dir, pointer);
-
-        // 3.3 modify the 1st entry of the copy of the i-node file
-        for(k=0;k<root_dir_block_num;k++){ i_node_array[0].pointer[k] = pointer[k];}
-        // 3.4 modify the root_dir_start_block
-        root_dir_start_block = pointer[0];
-        free(pointer);
- 
-        // 4. create a new entry in the file descriptor table
-        new_fd_entry = unused_fd_entry();
-        //printf("the index of the new fd_entry is %d\n", new_fd_entry);
-        fd_table[new_fd_entry].i_node_number = new_i_node;
-        fd_table[new_fd_entry].read_ptr.block = new_file_block; fd_table[new_fd_entry].read_ptr.entry = 0;
-        fd_table[new_fd_entry].write_ptr.block = new_file_block; fd_table[new_fd_entry].write_ptr.entry = 0;
-        
-        return new_fd_entry;
-    }
-    printf("fopen cannot reach here!\n");
-    return -1;  
 }
 
 int ssfs_fclose(int fileID)
