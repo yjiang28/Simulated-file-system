@@ -15,6 +15,10 @@
 #define max_file_num 200     // the # of i-nodes
 #define filename_length 10   // the filename has at most 10 characters
 #define max_restore_time 8
+#define unused '1'
+#define used '0'
+#define writeable '1'
+#define readonly '0'
 
 typedef struct i_node{
     int size;   // initial value is -1, indicating it's free; busy otherwise
@@ -64,7 +68,7 @@ int sp_start_block = 0,
     data_block_num = 1007;      // # data block for user
 
 /* cache */
-int        fbm[num_blocks], 
+char       fbm[num_blocks], 
            wm[num_blocks];
 superblock sp;
 i_node     i_node_array[max_file_num];
@@ -73,56 +77,49 @@ fd_entry   fd_table[max_file_num];
 char       a_block_buf[block_size];
 
 // my helper functions
-void load_sp()
-{
+void load_sp(){
     superblock *buffer_sp = (superblock *)malloc(block_size); 
     if( read_blocks(sp_start_block, 1, buffer_sp) < 0) exit(EXIT_FAILURE);
     memcpy(&sp, buffer_sp, block_size);
     free(buffer_sp);
 }
 
-void load_fbm()
-{
-    int *buffer_fbm = (int *)malloc(num_blocks);
+void load_fbm(){
+    char *buffer_fbm = (char *)malloc(num_blocks);
     if( read_blocks(fbm_start_block, 1, buffer_fbm) < 0 ) exit(EXIT_FAILURE);
-    memcpy(&fbm, buffer_fbm, num_blocks*sizeof(int));
+    memcpy(&fbm, buffer_fbm, num_blocks);
     free(buffer_fbm);
 }
 
-void load_wm()
-{
+void load_wm(){
     int *buffer_wm = (int *)malloc(num_blocks);
     if( read_blocks(wm_start_block, 1, buffer_wm) < 0 ) exit(EXIT_FAILURE);
     memcpy(&wm, buffer_wm, num_blocks*sizeof(int));
     free(buffer_wm);
 }
 
-void commit_sp()
-{
+void commit_sp(){
     superblock *buffer_sp = (superblock *)malloc(block_size); 
     memcpy(buffer_sp, &sp, block_size);
     if( write_blocks(sp_start_block, 1, buffer_sp) < 0) exit(EXIT_FAILURE);    
     free(buffer_sp);
 }
 
-void commit_fbm()
-{
-    int *buffer_fbm = (int *)malloc(num_blocks*sizeof(int));
-    memcpy(buffer_fbm, &fbm, num_blocks*sizeof(int));
+void commit_fbm(){
+    char *buffer_fbm = (char *)malloc(num_blocks*sizeof(int));
+    memcpy(buffer_fbm, &fbm, num_blocks);
     if( write_blocks(fbm_start_block, 1, buffer_fbm) < 0 ) exit(EXIT_FAILURE);
     free(buffer_fbm);
 }
 
-void commit_wm()
-{
+void commit_wm(){
     int *buffer_wm = (int *)malloc(num_blocks*sizeof(int));
     memcpy(buffer_wm, &wm, num_blocks*sizeof(int));
     if( write_blocks(wm_start_block, 1, buffer_wm) < 0 ) exit(EXIT_FAILURE);
     free(buffer_wm);
 }
 
-void load_i_node_file()
-{
+void load_i_node_file(){
     i_node *buffer = (i_node *)malloc(block_size), array[file_block_num][block_size/sizeof(i_node)];
     int i, j, k=0, m;
     load_sp();
@@ -145,8 +142,7 @@ void load_i_node_file()
     free(buffer);
 }
 
-void commit_i_node_file()
-{
+void commit_i_node_file(){
     i_node *buffer = (i_node *)malloc(block_size), array[file_block_num][block_size/sizeof(i_node)];
     int i, j, k=0, m;
     load_sp();
@@ -168,8 +164,7 @@ void commit_i_node_file()
     free(buffer);
 }
 
-void load_root_dir()
-{
+void load_root_dir(){
     dir_entry *buffer = (dir_entry *)malloc(block_size), array[root_dir_block_num][block_size/sizeof(dir_entry)];
     int i, j, k=0;
     load_i_node_file();
@@ -188,8 +183,7 @@ void load_root_dir()
     free(buffer);
 }
 
-void commit_root_dir()
-{
+void commit_root_dir(){
     dir_entry *buffer = (dir_entry *)malloc(block_size), array[root_dir_block_num][block_size/sizeof(dir_entry)];
     int i, j, k=0;
     load_i_node_file();
@@ -213,10 +207,8 @@ void commit_root_dir()
  */
 int unused_block()
 {
-    //load_fbm();
     int i;
-    // 1 indicates the data block is unused
-    for(i=data_start_block;i<num_blocks-data_start_block;i++) { if(fbm[i]==1) return i; }
+    for(i=data_start_block;i<num_blocks-data_start_block;i++) { if(fbm[i]==unused) return i; }
     return -1;
 }
 
@@ -252,8 +244,7 @@ void write_file_to_blocks(int nblocks, void *buf, int *pointer)
     {
         block_index = unused_block();
         if( write_blocks(block_index, 1, buf) < 0) exit(EXIT_FAILURE);
-        fbm[block_index] = 0;
-        //commit_fbm();
+        fbm[block_index] = used;
         buf += block_size;
         pointer[i] = block_index;
     }
@@ -352,13 +343,13 @@ int find_block_to_read(int i_node_number, int block, int *i_node_index)
  */
 int writes_block_by_char(int block_to_write, int offset, char *buf, int length)
 {
-	if(length<0 || offset+length >= block_size) return -1;
+	if(length<0 || offset+length > block_size) return -1;
     int j;
     if(read_blocks(block_to_write, 1, &a_block_buf) <0 ) exit(EXIT_FAILURE);
     for(j=0;j<length;j++){ a_block_buf[offset+j] = *(buf+j); }
     //a_block_buf[j] = '\0'; printf("buf=%s\n", buf);
     write_blocks(block_to_write, 1, &a_block_buf);
-    fbm[block_to_write] = 0;
+    fbm[block_to_write] = used;
     return length;
 }
 
@@ -398,14 +389,14 @@ void mkssfs(int fresh)
 
         /* setup the FBM & WM */
         for(i=0;i<data_start_block;i++){ 
-            fbm[i] = 0; 
-            if(i<3) wm[i] = 1; 
-            else wm[i] = 0; 
+            fbm[i] = used; 
+            if(i<3) wm[i] = writeable; 
+            else wm[i] = readonly; 
         }
 
         for(i=data_start_block;i<num_blocks;i++) { 
-            fbm[i] = 1; 
-            wm[i] = 0; 
+            fbm[i] = unused; 
+            wm[i] = readonly; 
         } // 1 indicates the data block is unused and writeable respectively
 
         /* set up an array containing all the i-nodes */ 
@@ -490,7 +481,7 @@ int ssfs_fopen(char *name)
             for(k=0;k<max_restore_time-1;k++)
             {
                 sp.shadow[k].size = sp.shadow[k+1].size;
-                for(j=0;j<sp.shadow[k].size;j++){ sp.shadow[k].pointer[j] = sp.shadow[k+1].pointer[j]; }
+                for(j=0;j<15;j++){ sp.shadow[k].pointer[j] = sp.shadow[k+1].pointer[j]; }
             }
             i = max_restore_time-1;
         }
@@ -500,8 +491,7 @@ int ssfs_fopen(char *name)
 
         // 1. find an empty block in the data block to place the file
         new_file_block = unused_block(); 
-        fbm[new_file_block] = 0;
-       // commit_fbm();
+        fbm[new_file_block] = used;
 
         // 2.1 create an i-node in the copy of the i-node file
         new_i_node = unused_i_node(); 
@@ -569,11 +559,13 @@ int ssfs_fwrite(int fileID, char *buf, int length)
     		int acc = writes_block_by_char(block, offset, buf, length);
             if(acc != -1)
             {
+            	printf("write ptr was%d:%d\n", fd_table[fileID].write_ptr.block, fd_table[fileID].write_ptr.entry);
                 fd_table[fileID].write_ptr.entry += acc; 
                 int inc = fd_table[fileID].write_ptr.entry - i_node_array[i_node_number].size%block_size+1;           
                 /* if this block is the last one belongs to this file, then the file size may be incremented */
                 if( find_block_to_read(i_node_number, block, NULL) == -1 && inc>0 ) inc_size(fileID, inc);
-                printf("fwrite:\nfd-entry %d\nfilesize %d\nwrite ptr %d:%d\n", fileID, i_node_array[i_node_number].size, fd_table[fileID].write_ptr.block, fd_table[fileID].write_ptr.entry);
+                printf("write ptr %d:%d\n", fd_table[fileID].write_ptr.block, fd_table[fileID].write_ptr.entry);
+                //printf("fwrite:\nfd-entry %d\nfilesize %d\nwrite ptr %d:%d\n", fileID, i_node_array[i_node_number].size, fd_table[fileID].write_ptr.block, fd_table[fileID].write_ptr.entry);
                 return length;
             } 
     		else return -1;
@@ -584,6 +576,7 @@ int ssfs_fwrite(int fileID, char *buf, int length)
         {
             fd_table[fileID].write_ptr.block = find_block_to_write(fileID, block);
             fd_table[fileID].write_ptr.entry = -1;
+            printf("write ptr %d:%d\n", fd_table[fileID].write_ptr.block, fd_table[fileID].write_ptr.entry);
             return ssfs_fwrite(fileID, buf, length);                                            
         }
 
@@ -598,6 +591,7 @@ int ssfs_fwrite(int fileID, char *buf, int length)
             acc += ssfs_fwrite(fileID, buf, avail);
             for(k=1;k<=piece;k++){ acc += ssfs_fwrite(fileID, buf+avail+block_size*k, block_size); }
             acc += ssfs_fwrite(fileID, buf+avail+ block_size*k, last); 
+        	printf("write ptr %d:%d\n", fd_table[fileID].write_ptr.block, fd_table[fileID].write_ptr.entry);
             return acc;
         }
     }
@@ -625,8 +619,10 @@ int ssfs_fread(int fileID, char *buf, int length)
             int acc = reads_block_by_char(block, offset, buf, length); 
             if(acc != -1)
             {
+            	printf("read ptr was%d:%d\n", fd_table[fileID].read_ptr.block, fd_table[fileID].read_ptr.entry);
                 fd_table[fileID].read_ptr.entry += acc;
-                printf("fread:\nfd-entry %d\nfilesize %d\nwrite ptr %d:%d\n", fileID, i_node_array[i_node_number].size, fd_table[fileID].read_ptr.block, fd_table[fileID].read_ptr.entry);
+                printf("read ptr %d:%d\n", fd_table[fileID].read_ptr.block, fd_table[fileID].read_ptr.entry);
+                //printf("fread:\nfd-entry %d\nfilesize %d\nread ptr %d:%d\n", fileID, i_node_array[i_node_number].size, fd_table[fileID].read_ptr.block, fd_table[fileID].read_ptr.entry);
                 return acc;
             }
             else return -1;
@@ -637,6 +633,7 @@ int ssfs_fread(int fileID, char *buf, int length)
         {
             fd_table[fileID].read_ptr.block = find_block_to_read(fileID, block, NULL);
             fd_table[fileID].read_ptr.entry = -1;
+            printf("read ptr %d:%d\n", fd_table[fileID].read_ptr.block, fd_table[fileID].read_ptr.entry);
             return ssfs_fread(fileID, buf, length);
         }
 
@@ -651,6 +648,7 @@ int ssfs_fread(int fileID, char *buf, int length)
            	acc += ssfs_fread(fileID, buf, avail);
             for(k=1;k<=piece;k++){ acc += ssfs_fread(fileID, buf+avail+block_size*k, block_size); }
             acc += ssfs_fread(fileID, buf+avail+block_size*k, last); 
+        printf("read ptr %d:%d\n", fd_table[fileID].read_ptr.block, fd_table[fileID].read_ptr.entry);
 	        return acc;
         }
     }
@@ -682,7 +680,7 @@ int fseek_helper(int fileID, int loc, char ptr)
     if(ptr == 'r')
     {
     	/* check if this entry goes beyond this file */
-    	if(i_node_array[i_node_number].size <= loc) {printf("loc>size\n");return -1;}
+    	if(i_node_array[i_node_number].size < loc) {printf("filesize %d\n",i_node_array[i_node_number].size); printf("loc>size\n");return -1;}
         /* find the number of blocks the read pointer has to walk through */
         else if(loc/block_size == 0) 
         { 
@@ -707,7 +705,7 @@ int fseek_helper(int fileID, int loc, char ptr)
         /* find the number of blocks the read pointer has to walk through */
         else if(loc/block_size == 0) 
         { 
-        	fd_table[fileID].write_ptr.entry = loc%block_size; 
+        	fd_table[fileID].write_ptr.entry = loc%block_size-1; 
             return 0; 
         }
         else
@@ -726,6 +724,7 @@ int fseek_helper(int fileID, int loc, char ptr)
 
 int ssfs_frseek(int fileID, int loc)
 {
+	printf("seek loc %d\n", loc);
     if(fileID >= 0 && fileID < max_file_num && loc>=0)
     {
         int i_node_number = fd_table[fileID].i_node_number;
@@ -783,7 +782,7 @@ int ssfs_remove(char *file)
     while(block != -1)
     {
         if( write_blocks(block, 1, &empty) < 0) exit(EXIT_FAILURE);
-        fbm[block] = 1;
+        fbm[block] = unused;
         block = find_block_to_read(i_node_number, block, &i_node_index); 
         //printf("%d\n", block);    
     }
