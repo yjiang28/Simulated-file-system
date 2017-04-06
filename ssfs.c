@@ -254,6 +254,9 @@ void write_file_to_blocks(int nblocks, void *buf, int *pointer)
     }
 }
 
+/* return 0 if the block to write is newly allocated to this i-node
+ * return 1 if the block to write is the last one belongs to the file associated with this i-node
+ */
 int find_block_to_write(int i_node_number, int block)
 {
     int k=0, block_to_write, new_i_node;
@@ -263,20 +266,20 @@ int find_block_to_write(int i_node_number, int block)
     /* if the write pointer is in the block pointed to by the last direct pointer  
      * and the indirect pointer is not used
      */
-    if(k==13 && file_i_node.size==14)
+    if(k==13 && file_i_node.pointer[14]==-1)
     {
         /* create an i-node pointed to by the indirected pointer */
         new_i_node = unused_i_node();
         /* find an unused block */
         block_to_write = unused_block();                    
         file_i_node.pointer[14] = new_i_node;
-        i_node_array[new_i_node].size = 1;
+        i_node_array[new_i_node].size = 0;
         i_node_array[new_i_node].pointer[0] = block_to_write;
     }
     /* if the write pointer is in the block pointed to by the last direct pointer
      * and the indirect pointer is used
      */
-    else if(k==13 && file_i_node.size==15)
+    else if(k==13 && file_i_node.pointer[14]!=-1)
     {
         /* go to the i-node pointed by the indirect pointer */
         new_i_node = file_i_node.pointer[14];
@@ -285,7 +288,7 @@ int find_block_to_write(int i_node_number, int block)
     /* if the write pointer is not found in the blocks pointed to by the direct pointers
      * and the indirect pointer is used
      */
-    else if(k==14 && file_i_node.size==15)
+    else if(k==14 && file_i_node.pointer[14]!=-1)
     {
         /* go to the i-node pointed by the indirect pointer */
         new_i_node = file_i_node.pointer[14];
@@ -305,7 +308,7 @@ int find_block_to_read(int i_node_number, int block, int *i_node_index)
     /* if the read pointer is in the block pointed to by the last direct pointer  
      * and the indirect pointer is not used
      */
-    if(k==13 && file_i_node.size==14)
+    if(k==13 && file_i_node.pointer[14]==-1)
     {
         printf("End of file reached\n");
         return -1;
@@ -313,7 +316,7 @@ int find_block_to_read(int i_node_number, int block, int *i_node_index)
     /* if the read pointer is in the block pointed to by the last direct pointer
      * and the indirect pointer is used
      */
-    else if(k==13 && file_i_node.size==15)
+    else if(k==13 && file_i_node.pointer[14]!=-1)
     {
         /* go to the i-node pointed by the indirect pointer */
         new_i_node = file_i_node.pointer[14];
@@ -323,7 +326,7 @@ int find_block_to_read(int i_node_number, int block, int *i_node_index)
     /* if the read pointer is not found in the blocks pointed to by the direct pointers
      * and the indirect pointer is used
      */
-    else if(k==14 && file_i_node.size==15)
+    else if(k==14 && file_i_node.pointer[14]!=-1)
     {
         /* go to the i-node pointed by the indirect pointer */
         new_i_node = file_i_node.pointer[14];
@@ -339,26 +342,27 @@ int find_block_to_read(int i_node_number, int block, int *i_node_index)
     return block_to_read;
 }
 
+/* returns # chars written
+ * -1 if the writing beyond boundary 
+ */
 int writes_block_by_char(int block_to_write, int offset, char *buf, int length)
 {
-    //printf("writes to block %d\n", block_to_write);
+    if(length<0 || offset+length >= block_size) return -1;
     int j;
     if(read_blocks(block_to_write, 1, &a_block_buf) <0 ) exit(EXIT_FAILURE);
-    //printf("writes to entry %d\n", offset);
     for(j=0;j<length;j++){ a_block_buf[offset+j] = *(buf+j); }
     write_blocks(block_to_write, 1, a_block_buf);
     fbm[block_to_write] = 0;
-    return j;
+    return length;
 }
 
 int reads_block_by_char(int block_to_read, int offset, char *buf, int length)
 {
-    //printf("reads from block %d\n", block_to_read);
+    if(length<0 || offset+length >= block_size) return -1;
     int j;
     if(read_blocks(block_to_read, 1, &a_block_buf) <0 ) exit(EXIT_FAILURE);
-    //printf("reads from entry %d\n", offset);
     for(j=0;j<length;j++){ *(buf+j) = a_block_buf[offset+j]; }
-    return j;
+    return length;
 }
 
 void mkssfs(int fresh)
@@ -383,6 +387,7 @@ void mkssfs(int fresh)
         for(i=0;i<max_restore_time;i++) {sp.shadow[i].size = -1;}
         // set up the j-node associated with the i-node file
         for(i=0;i<file_block_num;i++) { sp.root.pointer[i]=i+file_start_block; }
+        sp.root.size = max_file_num;    // =13
 
         /* setup the FBM & WM */
         for(i=0;i<data_start_block;i++){ 
@@ -398,7 +403,7 @@ void mkssfs(int fresh)
 
         /* set up an array containing all the i-nodes */ 
         for(i=0;i<root_dir_block_num;i++){ i_node_array[0].pointer[i] = i+root_dir_start_block; }  // the root directory takes up 4 blocks
-        i_node_array[0].size = root_dir_block_num;  // the 1st i-node in the i-node file is associated with the root directory
+        i_node_array[0].size = root_dir_block_num;  // =4; the 1st i-node in the i-node file is associated with the root directory
         for(i=1;i<max_file_num;i++) { i_node_array[i].size = -1; }
 
         /* set up the root directory */
@@ -486,7 +491,7 @@ int ssfs_fopen(char *name)
 
         // 2.1 create an i-node in the copy of the i-node file
         new_i_node = unused_i_node(); 
-        i_node_array[new_i_node].size = 1;
+        i_node_array[new_i_node].size = 0;
         i_node_array[new_i_node].pointer[0] = new_file_block;
 
         /////////////// 2.2 write the copy of the i-node file onto the disk  ///////////////
@@ -500,7 +505,7 @@ int ssfs_fopen(char *name)
         strcpy(root_dir[new_dir_entry].filename, name);
         /////////////// 3.2 write the copy of the root directory onto the disk ///////////////
         write_file_to_blocks(root_dir_block_num, &root_dir, &i_node_array[0].pointer);
-        
+        load_i_node_file(); load_root_dir(); 
         // 4. create a new entry in the file descriptor table
         new_fd_entry = unused_fd_entry(); 
         fd_table[new_fd_entry].i_node_number = new_i_node;
@@ -512,39 +517,53 @@ int ssfs_fopen(char *name)
     return -1;  
 }
 
+int inc_size(int fileID, int inc)
+{
+    if(fileID<0 || fileID>=max_file_num) return -1;
+    int k=0, i_node_number=fd_table[fileID].i_node_number;
+    while(i_node_number!=-1)
+    {
+        i_node_array[i_node_number].size += inc;
+        i_node_number = i_node_array[i_node_number].pointer[14];
+        k++;
+    }
+    return 0;
+}
+
 int ssfs_fwrite(int fileID, char *buf, int length)
 {
-    int k, block_to_write;
+    if(fileID<0 || fileID>=max_file_num) return -1;
+
+    int k=0, block_to_write, inc,
+        i_node_index[max_file_num]={-1},
+        i_node_number=fd_table[fileID].i_node_number;
     if(length == 0) return 0;
-    //printf("length %d\n", length);
+   
     /* if the file is opened */
-    if(fd_table[fileID].i_node_number != -1)
+    if(i_node_number != -1)
     {
+        int i_node_number = fd_table[fileID].i_node_number; 
         int block = fd_table[fileID].write_ptr.block;
         int entry = fd_table[fileID].write_ptr.entry;    // writing starts from the (entry+1)-th entry in this block   
         int offset = entry+1;    // # filled entries in the block containing the write pointer
         //printf("offset: %d\n", offset);
         /* if the available entry in this block is more than enough */
-        if(offset+length <= block_size)
+        if(offset+length <= block_size) 
         {
-            /* map the data block containing the write pointer into a buffer 
-             * and move the write pointer to the correct position 
-             */
-            fd_table[fileID].write_ptr.entry = writes_block_by_char(block, offset, buf, length);
-            //printf("case 1\n");
+            inc = writes_block_by_char(block, offset, buf, length);  
+            fd_table[fileID].write_ptr.entry += inc;            
+            /* if this block is the last one belongs to this file, then the file size may be incremented */
+            if(find_block_to_read(i_node_number, block, NULL) == -1 && i_node_array[i_node_number].size%block_size < fd_table[fileID].write_ptr.entry) 
+                    inc_size(fileID, inc);
+            return length;
         }
 
         /* if the write pointer is at the last entry in a block and the length is smaller than block size */
         else if(entry==block_size-1 && length<=block_size)
         {
-            /* copy the block containing the i-node file */
-            load_i_node_file();
-            block_to_write = find_block_to_write(fileID, block);
-            /* write to the unused block */
-            fd_table[fileID].write_ptr.entry = writes_block_by_char(block_to_write, 0, buf, length);
-            /* move the write pointer to the correct position */
-            fd_table[fileID].write_ptr.block = block_to_write;   
-            //printf("case 2\n");                                                
+            fd_table[fileID].write_ptr.block = find_block_to_write(fileID, block);
+            fd_table[fileID].write_ptr.entry = 0;
+            return ssfs_fwrite(fileID, buf, length);                                            
         }
 
         /* if the available entry in this block is not enough, divide the buf into pieces for recursing */
@@ -554,13 +573,12 @@ int ssfs_fwrite(int fileID, char *buf, int length)
             int rest  = length-avail;       // # chars to be written in other blocks
             int piece = rest/block_size;    // # blocks to write to
             int last  = rest%block_size;    // # chars to be written in the last block
-
-            ssfs_fwrite(fileID, buf, avail);
-            for(k=1;k<=piece;k++){ ssfs_fwrite(fileID, buf+avail+block_size*k, block_size); }
-            ssfs_fwrite(fileID, buf+avail+ block_size*k, last); 
-            //printf("case 3\n");
+            int acc = 0;
+            acc += ssfs_fwrite(fileID, buf, avail);
+            for(k=1;k<=piece;k++){ acc += ssfs_fwrite(fileID, buf+avail+block_size*k, block_size); }
+            acc += ssfs_fwrite(fileID, buf+avail+ block_size*k, last); 
+            return acc;
         }
-        return length;
     }
     printf("requested file is not opened\n");
     return -1;
@@ -579,24 +597,14 @@ int ssfs_fread(int fileID, char *buf, int length)
         int offset = entry+1;    // # filled entries in the block containing the read pointer
         
         /* if the read pointer will not go outside of this block */
-        if(offset+length <= block_size)
-        {
-            /* map the data block containing the write pointer into a buffer 
-             * and move the write pointer to the correct position 
-             */
-            fd_table[fileID].read_ptr.entry = reads_block_by_char(block, offset, buf, length);
-        }
+        if(offset+length <= block_size) fd_table[fileID].read_ptr.entry += reads_block_by_char(block, offset, buf, length); 
 
         /* if the read pointer is at the last entry in a block and the length is smaller than block size */
         else if(entry==block_size-1 && length<=block_size)
         {
-            /* copy the block containing the i-node file */
-            load_i_node_file();
-            block_to_read = find_block_to_read(fileID, block, NULL);
-            /* write to the unused block */
-            fd_table[fileID].read_ptr.entry = reads_block_by_char(block_to_read, 0, buf, length);
-            /* move the write pointer to the correct position */
-            fd_table[fileID].read_ptr.block = block_to_read;                                                   
+            fd_table[fileID].read_ptr.block = find_block_to_read(fileID, block, NULL);
+            fd_table[fileID].read_ptr.entry = 0;
+            return ssfs_fread(fileID, buf, length);
         }
 
         /* if the available entry in this block is not enough, divide the buf into pieces for recursing */
@@ -606,12 +614,12 @@ int ssfs_fread(int fileID, char *buf, int length)
             int rest  = length-avail;       // # chars to be written in other blocks
             int piece = rest/block_size;    // # blocks to write to
             int last  = rest%block_size;    // # chars to be written in the last block
-
-            ssfs_fread(fileID, buf, avail);
-            for(k=1;k<=piece;k++){ ssfs_fread(fileID, buf+avail+block_size*k, block_size); }
-            ssfs_fread(fileID, buf+avail+block_size*k, last); 
+            int acc = 0;
+            acc += ssfs_fread(fileID, buf, avail);
+            for(k=1;k<=piece;k++){ acc += ssfs_fread(fileID, buf+avail+block_size*k, block_size); }
+            acc += ssfs_fread(fileID, buf+avail+block_size*k, last); 
+            return acc;
         }
-        return length;
     }
     printf("requested file is not opened\n");
     return -1;
@@ -636,51 +644,47 @@ int fseek_helper(int fileID, int loc, char ptr)
         i_node_number = fd_table[fileID].i_node_number;
     if(ptr == 'r')
     {
+        /* check if this entry goes beyond this file */
+        if(i_node_array[i_node_number].size <= loc) {printf("loc>size\n");return -1;}
         /* find the number of blocks the read pointer has to walk through */
-        if(loc/block_size == 0) 
+        else if(loc/block_size == 0) 
         { 
-            /* check if this entry goes beyond this file */
-            if(read_blocks(fd_table[fileID].read_ptr.block, 1, a_block_buf) < 0) exit(EXIT_FAILURE);
-            if(*(a_block_buf+loc%block_size) == '0') return -1;
             fd_table[fileID].read_ptr.entry = loc%block_size; 
             return 0; 
         }
-
-        /* find the next block the read pointer should move to */
-        block_index = find_block_to_read(i_node_number, fd_table[fileID].read_ptr.block, NULL);
-        //printf("block_to_read: %d\n", block_index);
-        if(block_index == -1) { printf("read pointer out of bound\n"); return -1; }
-        
-        /* move the read pointer to this block */
-        loc -= block_size;
-        fd_table[fileID].read_ptr.block = block_index;
-        fd_table[fileID].read_ptr.entry = 0;
-        return fseek_helper(fileID, loc, 'r');
+        else
+        {
+            /* find the next block the read pointer should move to */
+            block_index = find_block_to_read(i_node_number, fd_table[fileID].read_ptr.block, NULL);
+            if(block_index == -1) { printf("read pointer out of bound\n"); return -1; }
+            fd_table[fileID].read_ptr.block = block_index;
+            fd_table[fileID].read_ptr.entry = 0;
+            loc -= block_size;
+            return fseek_helper(fileID, loc, 'r');
+        }
     }
     else if(ptr == 'w')
     {
-
+        /* check if this entry goes beyond this file */
+        if(i_node_array[i_node_number].size <= loc) return -1;
         /* find the number of blocks the read pointer has to walk through */
-        if(loc/block_size == 0) 
-        {
-            /* check if this entry goes beyond this file */
-            if(read_blocks(fd_table[fileID].write_ptr.block, 1, a_block_buf) < 0) exit(EXIT_FAILURE);
-            if(*(a_block_buf+loc%block_size) == '0') return -1;  
+        else if(loc/block_size == 0) 
+        { 
             fd_table[fileID].write_ptr.entry = loc%block_size; 
-            return 0;
+            return 0; 
         }
-        
-        /* find the next block the write pointer should move to */
-        block_index = find_block_to_read(i_node_number, fd_table[fileID].write_ptr.block, NULL);
-        if(block_index == -1) { printf("write pointer out of bound\n"); return -1; }
-
-        /* move the write pointer to this block */
-        loc -= block_size;
-        fd_table[fileID].write_ptr.block = block_index;
-        fd_table[fileID].write_ptr.entry = 0;
-        return fseek_helper(fileID, loc, 'w');
-    }
-    else return -1;
+        else
+        {
+            /* find the next block the read pointer should move to */
+            block_index = find_block_to_read(i_node_number, fd_table[fileID].write_ptr.block, NULL);
+            if(block_index == -1) { printf("read pointer out of bound\n"); return -1; }
+            fd_table[fileID].write_ptr.block = block_index;
+            fd_table[fileID].write_ptr.entry = 0;
+            loc -= block_size;
+            return fseek_helper(fileID, loc, 'w');
+        }
+    }    
+    else{ printf("Invalid paramenter\n"); return -1;}
 }
 
 int ssfs_frseek(int fileID, int loc)
@@ -688,7 +692,7 @@ int ssfs_frseek(int fileID, int loc)
     if(fileID >= 0 && fileID < max_file_num && loc>=0)
     {
         int i_node_number = fd_table[fileID].i_node_number;
-        if( i_node_number == -1) return -1;
+        if( i_node_number == -1) { printf("case1\n"); return -1;}
 
         /* move the read pointer to the beginning of this file */
         fd_table[fileID].read_ptr.block = i_node_array[i_node_number].pointer[0];
@@ -696,7 +700,11 @@ int ssfs_frseek(int fileID, int loc)
 
         return fseek_helper(fileID, loc, 'r');
     }
-    else return -1;
+    else
+    {
+        printf("case3\n");
+        return -1;
+    }  
 }
 
 int ssfs_fwseek(int fileID, int loc)
