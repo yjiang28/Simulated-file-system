@@ -603,7 +603,9 @@ int ssfs_fwrite(int fileID, char *buf, int length)
         /* if the write pointer is at the last entry in a block and the length is smaller than block size */
         else if(entry==block_size-1 && length<=block_size)
         {//printf("case2\n");
-            if((fd_table[fileID].write_ptr.block = find_block_to_write(fileID, block)),0) return -1;
+    		int temp = find_block_to_write(fileID, block);
+            if(temp <0 ) return -1;
+            fd_table[fileID].write_ptr.block = temp;
             fd_table[fileID].write_ptr.entry = -1;
             //printf("write ptr %d:%d\n", fd_table[fileID].write_ptr.block, fd_table[fileID].write_ptr.entry);
             return ssfs_fwrite(fileID, buf, length);                                            
@@ -618,16 +620,16 @@ int ssfs_fwrite(int fileID, char *buf, int length)
             int last  = rest%block_size;    // # chars to be written in the last block
             int acc = 0;
             int temp;
-            if((temp = ssfs_fwrite(fileID, buf, avail))<0) return -1;
-            else acc += temp;
+            acc += ssfs_fwrite(fileID, buf, avail);
+
             for(k=0;k<piece;k++)
             { 
-                if((temp = ssfs_fwrite(fileID, buf+avail+block_size*k, block_size))<0) return -1;
+                if((temp = ssfs_fwrite(fileID, buf+avail+block_size*k, block_size))<0) return acc;
                 else acc += temp;
             }
-            if((temp = ssfs_fwrite(fileID, buf+avail+ block_size*k, last))<0) return -1;
+            if((temp = ssfs_fwrite(fileID, buf+avail+ block_size*k, last))<0) return acc;
             else acc += temp;
-            buf[length] = '\0';
+            //buf[length] = '\0';
             //printf("write:\n%s\n", buf);
             //printf("write ptr %d:%d\n", fd_table[fileID].write_ptr.block, fd_table[fileID].write_ptr.entry);
             return acc;
@@ -640,9 +642,11 @@ int ssfs_fwrite(int fileID, char *buf, int length)
 
 int ssfs_fread(int fileID, char *buf, int length)
 {
+	printf("read: %d\n", length);
     int k, block_to_read, i_node_number = fd_table[fileID].i_node_number;
     if(length == 0) return 0;
     if(i_node_array[i_node_number].size == 0) return -1;
+    printf("filesize:%d\n", i_node_array[i_node_number].size);
     //printf("filesize %d\n", i_node_array[i_node_number].size);
     //printf("fread:\nfd-entry %d\nfilesize %d\nread ptr %d:%d\n", fileID, i_node_array[i_node_number].size, fd_table[fileID].read_ptr.block, fd_table[fileID].read_ptr.entry);
     /* if the file is opened */
@@ -672,7 +676,9 @@ int ssfs_fread(int fileID, char *buf, int length)
         /* if the read pointer is at the last entry in a block and the length is smaller than block size */
         else if(entry==block_size-1 && length<=block_size)
         {//printf("case2\n");
-            fd_table[fileID].read_ptr.block = find_block_to_read(fileID, block);
+    		int temp = find_block_to_read(fileID, block);
+            if(temp <0 ) return -1;
+            fd_table[fileID].read_ptr.block = temp;
             fd_table[fileID].read_ptr.entry = -1;
             //printf("read ptr %d:%d\n", fd_table[fileID].read_ptr.block, fd_table[fileID].read_ptr.entry);
             return ssfs_fread(fileID, buf, length);
@@ -686,10 +692,18 @@ int ssfs_fread(int fileID, char *buf, int length)
             int piece = rest/block_size;    // # blocks to write to
             int last  = rest%block_size;    // # chars to be written in the last block
             int acc = 0;
+            int temp;
             acc += ssfs_fread(fileID, buf, avail);
-            for(k=0;k<piece;k++){ acc += ssfs_fread(fileID, buf+avail+block_size*k, block_size); }
-            acc += ssfs_fread(fileID, buf+avail+block_size*k, last);
-        	buf[length] = '\0';
+            printf("avail=%d\nrest=%d\npiece=%d\nlast=%d\n", avail, rest, piece, last);
+            //printf("acc=%d\n", acc);
+            for(k=0;k<piece;k++)
+            { 
+            	if((temp = ssfs_fread(fileID, buf+avail+block_size*k, block_size)) <0 ) {printf("k=%d acc=%d\n", k, acc);return acc-(block_size-i_node_array[i_node_number].size%block_size);}
+            	else acc+=temp;
+            }
+            if((temp = ssfs_fread(fileID, buf+avail+block_size*k, last)) <0 ) {printf("last block acc=%d\n", acc);return acc;}
+            else acc+=temp;
+        	//buf[length] = '\0';
             //printf("read:\n%s\n", buf); 
             //printf("read ptr %d:%d\n", fd_table[fileID].read_ptr.block, fd_table[fileID].read_ptr.entry);
             return acc;
