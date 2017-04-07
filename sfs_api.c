@@ -301,10 +301,10 @@ int find_block_to_write(int i_node_number, int block){
     return block_to_write;
 }
 
-int find_block_to_read(int i_node_number, int block, int *i_node_index){
+int find_block_to_read(int i_node_number, int block){
     int k=0, block_to_read, new_i_node;
     for(k=0;k<i_node_array[i_node_number].size;k++) { if(i_node_array[i_node_number].pointer[k] == block) break; }
-                
+              printf("k=%d\ni_node_number%d\npointer[14]=%d\n", k, i_node_number, i_node_array[i_node_number].pointer[14]);  
     /* if the read pointer is in the block pointed to by the last direct pointer  
      * and the indirect pointer is not used
      */
@@ -320,7 +320,6 @@ int find_block_to_read(int i_node_number, int block, int *i_node_index){
     {
         /* go to the i-node pointed by the indirect pointer */
         new_i_node = i_node_array[i_node_number].pointer[14];
-        *(i_node_index+sizeof(int)) = new_i_node; 
         block_to_read = i_node_array[new_i_node].pointer[0];
     }
     /* if the read pointer is not found in the blocks pointed to by the direct pointers
@@ -330,12 +329,16 @@ int find_block_to_read(int i_node_number, int block, int *i_node_index){
     {
         /* go to the i-node pointed by the indirect pointer */
         new_i_node = i_node_array[i_node_number].pointer[14];
-        *(i_node_index+sizeof(int)) = new_i_node; 
-        block_to_read = find_block_to_read(new_i_node, block, i_node_index+sizeof(int));
+        block_to_read = find_block_to_read(new_i_node, block);
     }
-    else 
+    else if(k==14 && i_node_array[i_node_number].pointer[14]==-1) {printf("lll\n");return -1;}
+    else
     {
-        if(i_node_array[i_node_number].pointer[k+1] == -1) return -1; 
+        if(i_node_array[i_node_number].pointer[k+1] == -1) 
+    	{
+    		printf("End of file reached\n");
+    		return -1; 
+    	}
         block_to_read = i_node_array[i_node_number].pointer[k+1];
     }
     //printf("reads from block %d\n", block_to_read);
@@ -557,7 +560,7 @@ int ssfs_fwrite(int fileID, char *buf, int length)
         int block = fd_table[fileID].write_ptr.block;
         int entry = fd_table[fileID].write_ptr.entry;    // writing starts from the (entry+1)-th entry in this block   
         int offset = entry+1;    // # filled entries in the block containing the write pointer
-        //printf("write pointer at %d\n", entry);
+        
         /* if the available entry in this block is more than enough */
         if(offset+length <= block_size) 
     	{            //printf("case1\n");
@@ -568,9 +571,10 @@ int ssfs_fwrite(int fileID, char *buf, int length)
                 fd_table[fileID].write_ptr.entry += acc; 
                 int inc = fd_table[fileID].write_ptr.entry - i_node_array[i_node_number].size%block_size+1;           
                 /* if this block is the last one belongs to this file, then the file size may be incremented */
-                if( find_block_to_read(i_node_number, block, NULL) == -1 && inc>0 ) inc_size(fileID, inc);
+                if( find_block_to_read(i_node_number, block) == -1 && inc>0 ) inc_size(fileID, inc);
                 //printf("write ptr %d:%d\n", fd_table[fileID].write_ptr.block, fd_table[fileID].write_ptr.entry);               
                 commit_i_node_file(); load_i_node_file();
+                printf("write pointer at %d %d\n", fd_table[fileID].write_ptr.block, fd_table[fileID].write_ptr.entry);
                 //printf("fwrite:\nfd-entry %d\nfilesize %d\nwrite ptr %d:%d\n", fileID, i_node_array[i_node_number].size, fd_table[fileID].write_ptr.block, fd_table[fileID].write_ptr.entry);
                 return length;
             } 
@@ -640,7 +644,7 @@ int ssfs_fread(int fileID, char *buf, int length)
         /* if the read pointer is at the last entry in a block and the length is smaller than block size */
         else if(entry==block_size-1 && length<=block_size)
         {//printf("case2\n");
-            fd_table[fileID].read_ptr.block = find_block_to_read(fileID, block, NULL);
+            fd_table[fileID].read_ptr.block = find_block_to_read(fileID, block);
             fd_table[fileID].read_ptr.entry = -1;
             //printf("read ptr %d:%d\n", fd_table[fileID].read_ptr.block, fd_table[fileID].read_ptr.entry);
             return ssfs_fread(fileID, buf, length);
@@ -702,7 +706,7 @@ int fseek_helper(int fileID, int loc, char ptr)
         else
         {
         	/* find the next block the read pointer should move to */
-        	block_index = find_block_to_read(i_node_number, fd_table[fileID].read_ptr.block, NULL);
+        	block_index = find_block_to_read(i_node_number, fd_table[fileID].read_ptr.block);
         	if(block_index == -1) { printf("read pointer out of bound\n"); return -1; }
         	fd_table[fileID].read_ptr.block = block_index;
         	fd_table[fileID].read_ptr.entry = 0;
@@ -723,7 +727,7 @@ int fseek_helper(int fileID, int loc, char ptr)
         else
         {
         	/* find the next block the read pointer should move to */
-        	block_index = find_block_to_read(i_node_number, fd_table[fileID].write_ptr.block, NULL);
+        	block_index = find_block_to_read(i_node_number, fd_table[fileID].write_ptr.block);
         	if(block_index == -1) { printf("read pointer out of bound\n"); return -1; }
         	fd_table[fileID].write_ptr.block = block_index;
         	fd_table[fileID].write_ptr.entry = 0;
@@ -773,7 +777,7 @@ int ssfs_fwseek(int fileID, int loc)
 
 int ssfs_remove(char *file)
 {
-    int i, i_node_number, block, i_node_index[max_file_num]={-1};
+    int i, i_node_number, block;
     char empty[block_size] = {'0'};
     
     /* find the index of the i-node associated with this file in root directory */
@@ -802,7 +806,7 @@ int ssfs_remove(char *file)
     {
         if( write_blocks(block, 1, &empty) < 0) exit(EXIT_FAILURE);
         fbm[block] = unused;
-        block = find_block_to_read(i_node_number, block, &i_node_index);    
+        block = find_block_to_read(i_node_number, block);    
     }
 
 	/* clear all the i-nodes associated with this file in the i-node file (array) */
