@@ -235,8 +235,8 @@ int write_file_to_blocks(int nblocks, void *buf, int *pointer){
     int i, block_index;
     for(i=0;i<nblocks;i++)
     {
-        if((block_index = unused_block()) <0 ) {printf("1111\n"); return -1;}
-        printf("block for file %d\n", block_index);
+        if((block_index = unused_block()) <0 ) {return -1;}
+        //printf("block for file %d\n", block_index);
         if( write_blocks(block_index, 1, buf) < 0) return -1;
         fbm[block_index] = used;
         buf += block_size;
@@ -306,13 +306,13 @@ int find_block_to_write(int i_node_number, int block){
 int find_block_to_read(int i_node_number, int block){
     int k=0, block_to_read, new_i_node;
     for(k=0;k<i_node_array[i_node_number].size;k++) { if(i_node_array[i_node_number].pointer[k] == block) break; }
-              printf("k=%d\ni_node_number%d\npointer[14]=%d\n", k, i_node_number, i_node_array[i_node_number].pointer[14]);  
+              //printf("k=%d\ni_node_number%d\npointer[14]=%d\n", k, i_node_number, i_node_array[i_node_number].pointer[14]);  
     /* if the read pointer is in the block pointed to by the last direct pointer  
      * and the indirect pointer is not used
      */
     if(k==13 && i_node_array[i_node_number].pointer[14]==-1)
     {
-        printf("End of file reached\n");
+        //printf("End of file reached\n");
         return -1;
     }
     /* if the read pointer is in the block pointed to by the last direct pointer
@@ -338,7 +338,7 @@ int find_block_to_read(int i_node_number, int block){
     {
         if(i_node_array[i_node_number].pointer[k+1] == -1) 
         {
-            printf("End of file reached\n");
+            //printf("End of file reached\n");
             return -1; 
         }
         block_to_read = i_node_array[i_node_number].pointer[k+1];
@@ -352,21 +352,27 @@ int find_block_to_read(int i_node_number, int block){
  */
 int writes_block_by_char(int block_to_write, int offset, char *buf, int length){
     if(length<0 || offset+length > block_size) return -1;
+    char *a_block = (char *)malloc(block_size);
     int j;
-    if(read_blocks(block_to_write, 1, &a_block_buf) <0 ) exit(EXIT_FAILURE);
-    for(j=0;j<length;j++){ a_block_buf[offset+j] = *(buf+j); }
-    //a_block_buf[j] = '\0'; printf("buf=%s\n", buf);
-    write_blocks(block_to_write, 1, &a_block_buf);
+    if(read_blocks(block_to_write, 1, a_block) <0 ) exit(EXIT_FAILURE);
+    for(j=0;j<length;j++){ a_block[offset+j] = buf[j]; }
+        //printf("%d\n", offset+j-1);
+    //a_block[j] = '\0'; printf("%s\n", a_block);
+    write_blocks(block_to_write, 1, a_block);
+    free(a_block);
     fbm[block_to_write] = used;
     return length;
 }
 
-int reads_block_by_char(int block_to_read, int offset, char *buf, int length){
+int reads_block_by_char(int block_to_read, int offset, char *buf, int length){  
     if(length<0 || offset+length > block_size) return -1;
+    char *a_block = (char *)malloc(block_size);
     int j;
-    if(read_blocks(block_to_read, 1, &a_block_buf) <0 ) exit(EXIT_FAILURE);
-    for(j=0;j<length;j++){ *(buf+j) = a_block_buf[offset+j]; }
-    //a_block_buf[j] = '\0'; printf("buf=%s\n", buf);
+    if(read_blocks(block_to_read, 1, a_block) <0 ) exit(EXIT_FAILURE);
+    for(j=0;j<length;j++){ buf[j] = a_block[offset+j]; }
+        //printf("%d\n", offset+j-1);
+    free(a_block);
+    //buf[j] = '\0'; printf("%s\n", buf);
     return length;
 }
 
@@ -485,19 +491,19 @@ int ssfs_fopen(char *name)
         /* if the shadow list is full */
         if(i==max_restore_time)
         {
-        	/* remove the i-node file and root directory associated with the evicted shadow root */
-        	/* 1. free all the blocks taken by the root directory */       	
-        	i_node *buf = (i_node *)malloc(block_size);
-        	if( read_blocks(sp.shadow[0].pointer[0], 1, buf) <0 ) return -1;
-        	for(k=0;k<root_dir_block_num;k++)
-    		{
-    			fbm[buf[0].pointer[k]] = unused;
-    		}
-        	/* 2. free all the blocks taken by the i-node file */
-    		for(k=0;k<file_block_num;k++)
-    		{
-    			fbm[sp.shadow[0].pointer[k]] = unused;
-    		}
+            /* remove the i-node file and root directory associated with the evicted shadow root */
+            /* 1. free all the blocks taken by the root directory */        
+            i_node *buf = (i_node *)malloc(block_size);
+            if( read_blocks(sp.shadow[0].pointer[0], 1, buf) <0 ) return -1;
+            for(k=0;k<root_dir_block_num;k++)
+            {
+                fbm[buf[0].pointer[k]] = unused;
+            }
+            /* 2. free all the blocks taken by the i-node file */
+            for(k=0;k<file_block_num;k++)
+            {
+                fbm[sp.shadow[0].pointer[k]] = unused;
+            }
 
             /* evict the first one and shift the rest one spot above */
             for(k=0;k<max_restore_time-1;k++)
@@ -539,7 +545,7 @@ int ssfs_fopen(char *name)
         fd_table[new_fd_entry].write_ptr.block = new_file_block; 
         fd_table[new_fd_entry].write_ptr.entry = i_node_array[new_i_node].size/block_size-1;
 
-        printf("use block %d\n", new_file_block);
+        //printf("use block %d\n", new_file_block);
         return new_fd_entry;
     }
     printf("fopen cannot reach here!\n");
@@ -587,7 +593,7 @@ int ssfs_fwrite(int fileID, char *buf, int length)
                 if( find_block_to_read(i_node_number, block) == -1 && inc>0 ) inc_size(fileID, inc);
                 //printf("write ptr %d:%d\n", fd_table[fileID].write_ptr.block, fd_table[fileID].write_ptr.entry);               
                 commit_i_node_file(); load_i_node_file();
-                printf("write pointer at %d %d\n", fd_table[fileID].write_ptr.block, fd_table[fileID].write_ptr.entry);
+                //printf("write pointer at %d %d\n", fd_table[fileID].write_ptr.block, fd_table[fileID].write_ptr.entry);
                 //printf("fwrite:\nfd-entry %d\nfilesize %d\nwrite ptr %d:%d\n", fileID, i_node_array[i_node_number].size, fd_table[fileID].write_ptr.block, fd_table[fileID].write_ptr.entry);
                 return length;
             } 
@@ -614,13 +620,15 @@ int ssfs_fwrite(int fileID, char *buf, int length)
             int temp;
             if((temp = ssfs_fwrite(fileID, buf, avail))<0) return -1;
             else acc += temp;
-            for(k=1;k<=piece;k++)
+            for(k=0;k<piece;k++)
             { 
                 if((temp = ssfs_fwrite(fileID, buf+avail+block_size*k, block_size))<0) return -1;
                 else acc += temp;
             }
             if((temp = ssfs_fwrite(fileID, buf+avail+ block_size*k, last))<0) return -1;
             else acc += temp;
+            buf[length] = '\0';
+            //printf("write:\n%s\n", buf);
             //printf("write ptr %d:%d\n", fd_table[fileID].write_ptr.block, fd_table[fileID].write_ptr.entry);
             return acc;
         }
@@ -679,9 +687,11 @@ int ssfs_fread(int fileID, char *buf, int length)
             int last  = rest%block_size;    // # chars to be written in the last block
             int acc = 0;
             acc += ssfs_fread(fileID, buf, avail);
-            for(k=1;k<=piece;k++){ acc += ssfs_fread(fileID, buf+avail+block_size*k, block_size); }
-            acc += ssfs_fread(fileID, buf+avail+block_size*k, last); 
-            printf("read ptr %d:%d\n", fd_table[fileID].read_ptr.block, fd_table[fileID].read_ptr.entry);
+            for(k=0;k<piece;k++){ acc += ssfs_fread(fileID, buf+avail+block_size*k, block_size); }
+            acc += ssfs_fread(fileID, buf+avail+block_size*k, last);
+        	buf[length] = '\0';
+            //printf("read:\n%s\n", buf); 
+            //printf("read ptr %d:%d\n", fd_table[fileID].read_ptr.block, fd_table[fileID].read_ptr.entry);
             return acc;
         }
     }
@@ -737,7 +747,7 @@ int fseek_helper(int fileID, int loc, char ptr)
     else if(ptr == 'w')
     {
         /* check if this entry goes beyond this file */
-        if(i_node_array[i_node_number].size <= loc) return -1;
+        if(i_node_array[i_node_number].size < loc) return -1;
         /* find the number of blocks the read pointer has to walk through */
         else if(loc/block_size == 0) 
         { 
@@ -855,23 +865,19 @@ int ssfs_remove(char *file)
 /*
 int ssfs_commit()
 {
-	if(commit_return_value == -1) { printf("nothing to commit"); return -1;}
-	int i;
-	for(i=0;i<file_block_num;i++)
-	{
-		wm[sp.root.pointer[i]] = readonly;
-
-	}
-	for(i=0;i<root_dir_block_num;i++)
-	{
-		wm[i_node_array[0].pointer[i]] = readonly;
-	}
-
-	return commit_return_value;
+    if(commit_return_value == -1) { printf("nothing to commit"); return -1;}
+    int i;
+    for(i=0;i<file_block_num;i++)
+    {
+        wm[sp.root.pointer[i]] = readonly;
+    }
+    for(i=0;i<root_dir_block_num;i++)
+    {
+        wm[i_node_array[0].pointer[i]] = readonly;
+    }
+    return commit_return_value;
 }
-
 int ssfs_restore(int cnum)
 {
-	if(cnum<0 or cnum>=max_restore_time){ printf("Invalid input\n"); return -1;}
-
+    if(cnum<0 or cnum>=max_restore_time){ printf("Invalid input\n"); return -1;}
 }*/
