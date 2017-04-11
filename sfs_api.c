@@ -121,7 +121,7 @@ void commit_wm(){
 void load_i_node_file(){
     i_node *buffer = (i_node *)malloc(block_size), array[file_block_num][block_size/sizeof(i_node)];
     int i, j, k=0, m;
-	for(i=0;i<file_block_num;i++){
+    for(i=0;i<file_block_num;i++){
         if( read_blocks(sp.root.pointer[i], 1, buffer) < 0) exit(EXIT_FAILURE);
         memcpy(&array[i], buffer, block_size);
         for(j=0;j<block_size/sizeof(i_node);j++){
@@ -134,22 +134,31 @@ void load_i_node_file(){
     free(buffer);
 }
 
-void commit_i_node_file(){
+int commit_i_node_file(int modified){
     i_node *buffer = (i_node *)malloc(block_size), array[file_block_num][block_size/sizeof(i_node)];
-    int i, j, k=0, m;
+    int i, j, k=0, m, i_node_block, block_index;
+    if(modified!= -1)
+    {
+	    if(wm[sp.root.pointer[modified/(block_size/sizeof(i_node))]] == readonly)
+    	{
+    		if((block_index = unused_block()) <0 ) return -1;
+    		fbm[block_index] = used;
+    		sp.root.pointer[modified/(block_size/sizeof(i_node))] = block_index;		
+    	}
+    	return 0;
+    }
     for(i=0;i<file_block_num;i++){
         for(j=0;j<block_size/sizeof(i_node);j++){
             if(k>=max_file_num) break;
             array[i][j].size = i_node_array[k].size;
-            for(m=0;m<15;m++){ 
-                array[i][j].pointer[m] = i_node_array[k].pointer[m];                
-            }
+            for(m=0;m<15;m++){ array[i][j].pointer[m] = i_node_array[k].pointer[m]; }
             k++;
         }        
         memcpy(buffer, &array[i], block_size);
         if( write_blocks(sp.root.pointer[i], 1, buffer) < 0) exit(EXIT_FAILURE);        
     }
     free(buffer);
+    return 0;
 }
 
 void load_root_dir(){
@@ -168,9 +177,20 @@ void load_root_dir(){
     free(buffer);
 }
 
-void commit_root_dir(){
+int commit_root_dir(int modified){
     dir_entry *buffer = (dir_entry *)malloc(block_size), array[root_dir_block_num][block_size/sizeof(dir_entry)];
-    int i, j, k=0;
+    int i, j, k=0, block_index, i_node_block;
+    if(modified != -1)
+    {
+    	if(wm[sp.root.pointer[modified/(block_size/sizeof(i_node))]] == readonly)
+    	{
+    		if((block_index = unused_block()) <0 ) return -1;
+    		fbm[block_index] = used;
+    		i_node_array[0].pointer[modified/(block_size/sizeof(dir_entry))] = block_index;		
+    	}
+    	return 0;
+    }
+   
     for(i=0;i<root_dir_block_num;i++){
         for(j=0;j<block_size/sizeof(dir_entry);j++){
             if(k>=max_file_num) break;
@@ -182,6 +202,7 @@ void commit_root_dir(){
         if( write_blocks(i_node_array[0].pointer[i], 1, buffer) < 0) exit(EXIT_FAILURE);        
     }
     free(buffer);
+    return 0;
 }
 
 int unused_block(){
@@ -349,7 +370,7 @@ void mkssfs(int fresh)
         }
         for(i=data_start_block;i<num_blocks;i++) { 
             fbm[i] = unused; 
-            wm[i] = readonly; 
+            wm[i] = writeable; 
         } 
         /* set up an array containing all the i-nodes */ 
         for(i=0;i<max_file_num;i++) 
@@ -363,7 +384,7 @@ void mkssfs(int fresh)
         root_dir[0].i_node_index = 0;   // the first i-node is associated with the root directory
         for(i=1;i<max_file_num;i++){ root_dir[i].i_node_index = -1; }        
         /* map the superblock, fbm, wm and i-node file onto the disk */
-        commit_sp(); commit_fbm(); commit_wm(); commit_i_node_file(); commit_root_dir(); 
+        commit_sp(); commit_fbm(); commit_wm(); commit_i_node_file(-1); commit_root_dir(-1); 
         /* set up the data blocks and map it onto the disk */
         char data[num_blocks-20][block_size];
         char *buffer_db = (char *)malloc(data_block_num*block_size*sizeof(char));
@@ -411,49 +432,26 @@ int ssfs_fopen(char *name)
     /* if the file doesn't exist, create a new one of size 0 */
     if(i==max_file_num)
     {        
-        int new_dir_entry=0, new_file_block=0, new_i_node=0, new_fd_entry=0;
-        /* copy the root to one of the available shadow roots */
-        for(i=0;i<max_restore_time;i++){ if(sp.shadow[i].size==-1) break;}
-        /* if the shadow list is full */
-        if(i==max_restore_time)
-        {
-            /* remove the i-node file and root directory associated with the evicted shadow root */
-            /* 1. free all the blocks taken by the root directory */        
-            i_node *buf = (i_node *)malloc(block_size);
-            if( read_blocks(sp.shadow[0].pointer[0], 1, buf) <0 ) return -1;
-            for(k=0;k<root_dir_block_num;k++){ fbm[buf[0].pointer[k]] = unused; }
-            /* 2. free all the blocks taken by the i-node file */
-            for(k=0;k<file_block_num;k++){ fbm[sp.shadow[0].pointer[k]] = unused; }
-            /* evict the first one and shift the rest one spot above */
-            for(k=0;k<max_restore_time-1;k++)
-            {
-                sp.shadow[k].size = sp.shadow[k+1].size;
-                for(j=0;j<15;j++){ sp.shadow[k].pointer[j] = sp.shadow[k+1].pointer[j]; }
-            }
-            i = max_restore_time-1;
-        }
-        // let a j-node to store the current root 
-        sp.shadow[i].size = sp.root.size;
-        for(j=0;j<file_block_num;j++){ sp.shadow[i].pointer[j] = sp.root.pointer[j]; }
-        commit_return_value = i;
+        int new_dir_entry, new_file_block, new_i_node, new_fd_entry;
+        
         // 1. find an empty block in the data block to place the file
         if((new_file_block = unused_block()) <0) return -1;
         fbm[new_file_block] = used;
 
         // 2.1 create an i-node in the copy of the i-node file
         if((new_i_node = unused_i_node()) <0 ) return -1;
+        if( commit_i_node_file(new_i_node) <0 ) return -1;
         i_node_array[new_i_node].size = 0;
         i_node_array[new_i_node].pointer[0] = new_file_block;
         for(k=1;k<15;k++){ i_node_array[new_i_node].pointer[k] = -1; }
-        if( write_file_to_blocks(file_block_num, &i_node_array, &sp.root.pointer) <0 ) return -1;
                
         // 3.1 create a new entry in the copy of the root directory
         if((new_dir_entry = unused_dir_entry()) <0 ) return -1;
+    	if( commit_root_dir(new_dir_entry) <0 ) return -1;
         root_dir[new_dir_entry].i_node_index = new_i_node;
         strcpy(root_dir[new_dir_entry].filename, name);
-        if( write_file_to_blocks(root_dir_block_num, &root_dir, &i_node_array[0].pointer) <0 ) return -1;
 
-        commit_sp();commit_i_node_file();commit_root_dir();
+        commit_sp();commit_fbm(); commit_i_node_file(-1);commit_root_dir(-1);
         // 4. create a new entry in the file descriptor table
         if((new_fd_entry = unused_fd_entry()) <0 ) return -1;
         fd_table[new_fd_entry].i_node_number   = new_i_node;
@@ -474,6 +472,7 @@ int inc_size(int fileID, int inc)
     int k=0, i_node_number=fd_table[fileID].i_node_number;
     while(i_node_number!=-1)
     {       
+    	if( commit_i_node_file(i_node_number) <0 ) return -1;
         i_node_array[i_node_number].size += inc;
         i_node_number = i_node_array[i_node_number].pointer[14];        
     }
@@ -482,7 +481,7 @@ int inc_size(int fileID, int inc)
 
 int ssfs_fwrite(int fileID, char *buf, int length)
 {
-	if(length == 0) return 0;
+    if(length == 0) return 0;
     if(fileID<0 || fileID>=max_file_num) return -1;
 
     int k=0, block_to_write, i_node_number=fd_table[fileID].i_node_number;
@@ -503,7 +502,7 @@ int ssfs_fwrite(int fileID, char *buf, int length)
                 int inc = fd_table[fileID].write_ptr.entry - i_node_array[i_node_number].size%block_size+1;           
                 /* if this block is the last one belongs to this file, then the file size may be incremented */
                 if( find_block_to_read(i_node_number, block) == -1 && inc>0 ) inc_size(fileID, inc);          
-                commit_i_node_file(); load_i_node_file();
+                commit_fbm(); commit_i_node_file(-1); load_i_node_file();
                 return length;
             } 
             else return -1;
@@ -511,7 +510,7 @@ int ssfs_fwrite(int fileID, char *buf, int length)
         /* if the write pointer is at the last entry in a block and the length is smaller than block size */
         else if(entry==block_size-1 && length<=block_size)
         {   
-    		int temp = find_block_to_write(i_node_number, block);
+            int temp = find_block_to_write(i_node_number, block);
             if(temp <0 ) {return -1;}
             fd_table[fileID].write_ptr.block = temp;
             fd_table[fileID].write_ptr.entry = -1;
@@ -546,7 +545,7 @@ int ssfs_fread(int fileID, char *buf, int length)
 {
     int k, block_to_read, i_node_number = fd_table[fileID].i_node_number;
     if(length == 0) return 0;
-    if(i_node_array[i_node_number].size == 0) return 0;
+    if(i_node_array[i_node_number].size == 0) {printf("111\n");return 0;}
     /* if the file is opened */
     if(fd_table[fileID].i_node_number != -1)
     {
@@ -567,7 +566,7 @@ int ssfs_fread(int fileID, char *buf, int length)
         /* if the read pointer is at the last entry in a block and the length is smaller than block size */
         else if(entry==block_size-1 && length<=block_size)
         {
-    		int temp = find_block_to_read(i_node_number, block);
+            int temp = find_block_to_read(i_node_number, block);
             if(temp <0 ) return -1;
             fd_table[fileID].read_ptr.block = temp;
             fd_table[fileID].read_ptr.entry = -1;
@@ -585,8 +584,8 @@ int ssfs_fread(int fileID, char *buf, int length)
             acc += ssfs_fread(fileID, buf, avail);
             for(k=0;k<piece;k++)
             { 
-            	if((temp = ssfs_fread(fileID, buf+avail+block_size*k, block_size)) <0 ) return acc-(block_size-i_node_array[i_node_number].size%block_size);
-            	else acc+=temp; 
+                if((temp = ssfs_fread(fileID, buf+avail+block_size*k, block_size)) <0 ) return acc-(block_size-i_node_array[i_node_number].size%block_size);
+                else acc+=temp; 
             }
             if((temp = ssfs_fread(fileID, buf+avail+block_size*k, last)) <0 ) return acc;
             else acc+=temp; 
@@ -704,6 +703,7 @@ int ssfs_remove(char *file)
         if(strcmp(root_dir[i].filename, file)==0) 
         { 
             i_node_number = root_dir[i].i_node_index; 
+            if( commit_root_dir(i) <0 ) return -1;
             root_dir[i].i_node_index = -1;
             break;
         }
@@ -725,6 +725,7 @@ int ssfs_remove(char *file)
     int temp;
     do
     {
+    	if( commit_i_node_file(i_node_number) <0 ) return -1;
         i_node_array[i_node_number].size = -1;
         for(i=0;i<14;i++)
         {
@@ -735,47 +736,58 @@ int ssfs_remove(char *file)
         i_node_number = temp;
     }while(i_node_number != -1);
 
-	commit_fbm();
-    commit_i_node_file();
-    commit_root_dir();
+    commit_fbm();
+    commit_i_node_file(-1);
+    commit_root_dir(-1);
     load_root_dir();
+
     return 0;
+}
+
+int commit_helper()
+{
+    int i, j, k;
+    /* copy the root to one of the available shadow roots */
+    for(i=0;i<max_restore_time;i++){ if(sp.shadow[i].size==-1) break;}
+    /* if the shadow list is full */
+    if(i==max_restore_time)
+    {
+        /* remove the i-node file and root directory associated with the evicted shadow root */
+        /* 1. free all the blocks taken by the root directory */        
+        i_node *buf = (i_node *)malloc(block_size);
+        if( read_blocks(sp.shadow[0].pointer[0], 1, buf) <0 ) return -1;
+        for(k=0;k<root_dir_block_num;k++){ fbm[buf[0].pointer[k]] = unused; }
+        /* 2. free all the blocks taken by the i-node file */
+        for(k=0;k<file_block_num;k++){ fbm[sp.shadow[0].pointer[k]] = unused; }
+        /* evict the first one and shift the rest one spot above */
+        for(k=0;k<max_restore_time-1;k++)
+        {
+            sp.shadow[k].size = sp.shadow[k+1].size;
+            for(j=0;j<15;j++){ sp.shadow[k].pointer[j] = sp.shadow[k+1].pointer[j]; }
+        }
+        i = max_restore_time-1;
+    }
+    // let a j-node to store the current root 
+    sp.shadow[i].size = sp.root.size;
+    for(j=0;j<file_block_num;j++){ sp.shadow[i].pointer[j] = sp.root.pointer[j]; }
+   // commit_i_node_file();commit_root_dir();
+    return i;
 }
 
 int ssfs_commit()
 {
-    if(commit_return_value == -1) { printf("nothing to commit"); return -1;}
+    //if(commit_return_value == -1) { printf("nothing to commit"); return -1;}
     int i;
-    for(i=0;i<file_block_num;i++)
-    {
-        wm[sp.root.pointer[i]] = readonly;
-    }
-    for(i=0;i<root_dir_block_num;i++)
-    {
-        wm[i_node_array[0].pointer[i]] = readonly;
-    }
-    return commit_return_value;
+    for(i=0;i<file_block_num;i++){ wm[sp.root.pointer[i]] = readonly; }
+    for(i=0;i<root_dir_block_num;i++){ wm[i_node_array[0].pointer[i]] = readonly; }
+    return commit_helper();
 }
 
 int ssfs_restore(int cnum)
 {
     if(cnum<0 || cnum>=max_restore_time){ printf("Invalid input\n"); return -1;}
-    int i, j;
-    for(i=0;i<max_restore_time;i++){ if(sp.shadow[i].size != -1) break; }
-    if(i==max_restore_time) i--;
-    i -= cnum;
-    if(i<0) { printf("Invalid input\n"); return -1;}
+    int j;
     /* copy the shadow root to the root */
-    for(j=0;j<file_block_num;j++){ sp.root.pointer[j] = sp.shadow[i].pointer[j]; }
-	load_root_dir();
+    for(j=0;j<file_block_num;j++){ sp.root.pointer[j] = sp.shadow[cnum].pointer[j]; }
+    load_i_node_file(); load_root_dir();
 }
-/*
-int main()
-{
-	mkssfs(1);
-	printf("root-dir start block %d\n", sp.root.pointer[0]);
-	ssfs_fopen("test1");
-	printf("root-dir start block %d\n", sp.root.pointer[0]);
-	ssfs_restore(1);
-	printf("root-dir start block %d\n", sp.root.pointer[0]);
-}*/
